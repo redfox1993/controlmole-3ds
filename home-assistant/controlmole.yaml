@@ -1,0 +1,78 @@
+# Home Assistant package: add homeassistant: packages: !include_dir_named packages
+# Copy this file to config/packages/controlmole.yaml.
+# Replace the webhook_id below with a long, random secret before use.
+# Payload: {"device_id":"vincent-3ds","used_minutes":15,"timestamp":1795341600}
+input_number:
+  controlmole_3ds_used:
+    name: "3DS Spielzeit heute"
+    min: 0
+    max: 1440
+    step: 1
+    unit_of_measurement: min
+    icon: mdi:nintendo-3ds
+  controlmole_daily_budget:
+    name: "Medienzeit Tagesbudget"
+    min: 0
+    max: 480
+    step: 5
+    initial: 60
+    unit_of_measurement: min
+
+input_datetime:
+  controlmole_last_update:
+    name: "3DS letzter Bericht"
+    has_date: true
+    has_time: true
+
+template:
+  - sensor:
+      - name: "Medienzeit verbleibend"
+        unique_id: controlmole_remaining_minutes
+        unit_of_measurement: min
+        state: >-
+          {{ [0, states('input_number.controlmole_daily_budget') | float(0)
+              - states('input_number.controlmole_3ds_used') | float(0)
+              - states('sensor.vincent_android_used_minutes') | float(0)] | max | round(0) }}
+        availability: >-
+          {{ states('input_number.controlmole_daily_budget') not in ['unknown','unavailable']
+             and states('input_number.controlmole_3ds_used') not in ['unknown','unavailable'] }}
+
+automation:
+  - id: controlmole_webhook_receive
+    alias: "ControlMole - Spielzeit empfangen"
+    mode: queued
+    triggers:
+      - trigger: webhook
+        webhook_id: REPLACE_WITH_LONG_RANDOM_PRIVATE_WEBHOOK_ID
+        allowed_methods: [POST]
+        local_only: true
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ trigger.json is defined and trigger.json is mapping
+             and trigger.json.device_id | default('') == 'vincent-3ds'
+             and trigger.json.used_minutes is defined
+             and is_number(trigger.json.used_minutes)
+             and 0 <= trigger.json.used_minutes | float <= 1440 }}
+    actions:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.controlmole_3ds_used
+        data:
+          value: "{{ trigger.json.used_minutes | float }}"
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.controlmole_last_update
+        data:
+          datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+  - id: controlmole_reset_daily
+    alias: "ControlMole - Tageszähler zurücksetzen"
+    triggers:
+      - trigger: time
+        at: "00:00:00"
+    actions:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.controlmole_3ds_used
+        data:
+          value: 0
