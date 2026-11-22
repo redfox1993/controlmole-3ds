@@ -26,3 +26,17 @@ Send a JSON POST to `/api/webhook/<secret>` on the local HA instance:
 - Handle clock drift, date rollover, stale reports, and games not covered by the plugin.
 - Validate the unofficial Family Link source before enabling shared-budget enforcement.
 - This phase has not been compiled or tested on real 3DS hardware.
+
+## Experimental 3DS sender (new, not hardware-tested)
+
+The game plugin now contains an **opt-in** HTTP POST reporter. It is disabled unless you create `sdmc:/3ds/ControlMole/ha.ini`:
+
+```ini
+url=http://192.168.1.10:8123/api/webhook/YOUR_PRIVATE_WEBHOOK_ID
+```
+
+Replace the address with your actual Home Assistant LAN IP and the webhook ID with the same private secret from the HA package. The plugin attempts to POST cumulative counted minutes roughly once a minute while a supported game is active. This does **not** implement receiving or enforcing a remote budget.
+
+**Do not install this experimental plugin on a child's daily-use 3DS yet.** The network calls have not been compiled against the target toolchain or tested on real hardware; they may block or crash a game. The original local ControlMole plugin remains the safer choice until validation. A future revision should move network I/O to a bounded asynchronous worker, provide error logs, and avoid repeated service initialization.
+
+The current Home Assistant receiver trusts the possession of the webhook URL and is not an authentication protocol for remote administration. Keep the webhook ID private and LAN-only.
