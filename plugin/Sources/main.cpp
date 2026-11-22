@@ -992,6 +992,45 @@ static void headsUp(int left) {
   Process::Play();
 }
 
+
+// Experimental opt-in Home Assistant reporter. Runs only when ha_url is set.
+// Network calls may fail on some titles; local time enforcement never depends on HA.
+static std::string haUrl() {
+  std::string ini = readAll(std::string(DIR) + "/ha.ini");
+  size_t pos = ini.find("url=");
+  if (pos == std::string::npos || (pos && ini[pos - 1] != '\n')) return "";
+  size_t end = ini.find_first_of("\r\n", pos);
+  std::string url = ini.substr(pos + 4, end == std::string::npos ? end : end - pos - 4);
+  // No redirects, credentials, or remote HTTP targets; use a LAN IP.
+  if (url.compare(0, 7, "http://") != 0 || url.size() > 240 ||
+      url.find('@') != std::string::npos || url.find(' ') != std::string::npos) return "";
+  return url;
+}
+
+static void reportToHa(const std::string& url, int usedMinutes) {
+  if (url.empty() || usedMinutes < 0 || usedMinutes > 1440) return;
+  Result rc = httpcInit(0);
+  if (R_FAILED(rc)) return;
+  httpcContext ctx;
+  rc = httpcOpenContext(&ctx, HTTPC_METHOD_POST, url.c_str(), 0);
+  if (R_SUCCEEDED(rc)) {
+    char payload[100];
+    int n = snprintf(payload, sizeof(payload),
+                     "{\"device_id\":\"vincent-3ds\",\"used_minutes\":%d}", usedMinutes);
+    if (n > 0 && n < (int)sizeof(payload)) {
+      rc = httpcAddRequestHeaderField(&ctx, "Content-Type", "application/json");
+      if (R_SUCCEEDED(rc)) rc = httpcAddPostDataRaw(&ctx, (u32*)payload, (u32)n);
+      if (R_SUCCEEDED(rc)) rc = httpcBeginRequest(&ctx);
+      if (R_SUCCEEDED(rc)) {
+        u32 status = 0;
+        httpcGetResponseStatusCode(&ctx, &status, 0);
+      }
+    }
+    httpcCloseContext(&ctx);
+  }
+  httpcExit();
+}
+
 // ---------------------------------------------------------------- main ----
 
 static void onEvent(Process::Event e) {
@@ -1040,6 +1079,8 @@ int main(void) {
   s64 bootAt = now(), backAt = 0;
   u32 lastFrames = 0;
   int drawingFor = 0;  // seconds in a row the game showed new frames
+  std::string haEndpoint = haUrl();
+  s64 lastHaReport = 0;
 
   while (true) {
     Sleep(Seconds(1));
@@ -1067,6 +1108,11 @@ int main(void) {
     lastFrames = f;
     bool settled = t - bootAt >= 20 && t - backAt >= 3 && (!osdAlive || drawingFor >= 3);
     if (++sinceWrite >= 15) sinceWrite = 0, writeSitting(cur);
+    // Reporting is best-effort; do not change the local rules on failure.
+    if (counted && !haEndpoint.empty() && t - lastHaReport >= 60) {
+      lastHaReport = t;
+      reportToHa(haEndpoint, (int)((before + mine) / 60));
+    }
     if (!counted || !rules.block) continue;
 
     int minutes = (before + mine) / 60, limit = limitToday(rules, t);
